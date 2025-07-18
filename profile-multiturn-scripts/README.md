@@ -28,10 +28,10 @@ We've provided some scripts to analyze the logs. Our visualized results are in [
 
 2. `overview_duration.py`: Plots the rollout and training duration for each step, shows step-to-step timing trends and patterns.
 
-3. `per_step_all_workers.py`: Analyzes time distribution for each step across all workers, shows load balancing and worker performance variations, identifies the slowest worker per step (critical path analysis), and visualizes worker synchronization patterns. 
+3. `per_step_all_workers.py`: Analyzes time distribution for each phase across all workers in a specific step (into separarte images)
 
-4. `req_analysis_and_cdf.py`: workers on the log of a specific worker in a specific step, and plot the cdf of the request duration.
-plot the top slowest requests, breaks down individual requests into processing phases, and shows detailed phase-by-phase timing breakdown
+4. `req_analysis_and_cdf.py`: works on the log of a specific worker in a specific step, and plot the cdf of the duration of the requests on that worker.
+Also analyze the top slowest requests, breaks down individual requests into processing phases, and shows detailed phase-by-phase timing breakdown
 
 5. `turn_difference.py`: Plot the average engine call duration of each turn.
 
