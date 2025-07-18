@@ -20,7 +20,7 @@ step_1/
     worker_1.jsonl
 ```
 
-# Analysis
+## Visualize
 
 We've provided some scripts to analyze the logs. Our visualized results are in [script-examples](./script-examples):
 
@@ -40,7 +40,7 @@ plot the top slowest requests, breaks down individual requests into processing p
 7. `event_persentage_step.py`: plot the event time taken in percentage of each step.
 
 
-# A Quick Reproduction to profile
+# A Quick Reproduction of the profile
 
 ```bash
 docker run \
