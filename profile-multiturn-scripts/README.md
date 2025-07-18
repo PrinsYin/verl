@@ -36,7 +36,7 @@ We've provided some scripts to analyze the logs. Our visualized results are in [
 
 6. `turn_difference.py`: Plot the average engine call duration of each turn.
 
-7. `turn_distribution.py`: plot the number of turns distribution of each step.
+7. `turn_distribution.py`: plot the number of turns distribution of each step (turn_num.png), and the average duration of each turn (turn_distribution.png).
 
 8. `event_persentage_step.py`: plot the event time taken in percentage of each step.
 

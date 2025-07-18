@@ -59,18 +59,19 @@ turn_avg_duration_by_step = {
 }
 
 # ---------- 图一：每个 step 的 turn count 堆叠图 ----------
-# plt.figure(figsize=(16, 6))
-# bottom = [0] * len(steps_sorted)
-# for turn in all_turn_ids:
-#     counts = turn_counts_by_step[turn]
-#     plt.bar(steps_sorted, counts, bottom=bottom, label=f"turn={turn}")
-#     bottom = [b + c for b, c in zip(bottom, counts)]
-# plt.ylabel("Count")
-# plt.title("Turn Count per Step (All Turns)")
-# plt.xticks(ticks=range(len(steps_sorted)), labels=reduce_ticks(steps_sorted, 5), rotation=45)
-# plt.legend()
-# plt.tight_layout()
-# plt.show()
+plt.figure(figsize=(16, 6))
+bottom = [0] * len(steps_sorted)
+for turn in all_turn_ids:
+    counts = turn_counts_by_step[turn]
+    plt.bar(steps_sorted, counts, bottom=bottom, label=f"turn={turn}")
+    bottom = [b + c for b, c in zip(bottom, counts)]
+plt.ylabel("Count")
+plt.title("Turn Count per Step (All Turns)")
+plt.xticks(ticks=range(len(steps_sorted)), labels=reduce_ticks(steps_sorted, 5), rotation=45)
+plt.legend()
+plt.tight_layout()
+plt.savefig("zpics/turn_count_per_step.png", dpi=200)
+
 
 # ---------- 图二：每个 step 的 turn 平均耗时折线图 ----------
 # ---------- 图二：每个 step 的 turn 平均耗时折线图 ----------
@@ -83,5 +84,5 @@ plt.title("Avg Duration per Turn per Step")
 plt.xticks(ticks=range(len(steps_sorted)), labels=reduce_ticks(steps_sorted, 5), rotation=45)
 plt.legend()
 plt.tight_layout()
-plt.savefig("turn_avg_duration_per_step.png", dpi=200)
+plt.savefig("zpics/turn_avg_duration_per_step.png", dpi=200)
 
