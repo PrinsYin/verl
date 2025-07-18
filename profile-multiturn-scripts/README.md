@@ -33,11 +33,13 @@ We've provided some scripts to analyze the logs. Our visualized results are in [
 4. `req_analysis_and_cdf.py`: works on the log of a specific worker in a specific step, and plot the cdf of the duration of the requests on that worker.
 Also analyze the top slowest requests, breaks down individual requests into processing phases, and shows detailed phase-by-phase timing breakdown
 
-5. `turn_difference.py`: Plot the average engine call duration of each turn.
+5. `outlier_req.py`: Analyze the top slowest requests, breaks down individual requests into processing phases, and shows detailed phase-by-phase timing breakdown.
 
-6. `turn_distribution.py`: plot the number of turns distribution of each step.
+6. `turn_difference.py`: Plot the average engine call duration of each turn.
 
-7. `event_persentage_step.py`: plot the event time taken in percentage of each step.
+7. `turn_distribution.py`: plot the number of turns distribution of each step.
+
+8. `event_persentage_step.py`: plot the event time taken in percentage of each step.
 
 
 # A Quick Reproduction of the profile
