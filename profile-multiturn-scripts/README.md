@@ -1,37 +1,15 @@
-# logging
+# Profiling Visualization
 
-To do fine-grained logging in sglang multi-turn rollout [sglang_rollout.py](https://github.com/PrinsYin/verl/blob/multiturn_profile_log/verl/workers/rollout/sglang_rollout/sglang_rollout.py),  simply add the following code:
+Following our [profile guidance](https://github.com/zhaochenyang20/Awesome-ML-SYS-Tutorial/blob/main/rlhf/verl/multi-turn/tool_examples/debug-tp-2.md), the log is stored in:
 
-```python=
-self.log_manager.log(
-    log_path,
-    event="tool_execution",
-    duration=tool_execution_end_time - tool_execution_start_time,
-    extra={"request_id": _req.request_id, "turn": current_turns},
-    workid=self._rank,
-    step=self.step
-)
-```
-
-through this, we can get the duration of each event of each turn of each request of each step of each worker. `log_path` is the path to the log file, which is:
-
-```
-log_path = os.path.join(
-    "logs/"+os.getenv("EXPERIMENT_NAME", "multiturn_log_dir"),
-    f"step_{self.step}",
-    f"worker_{self._rank}.jsonl"
-)
-```
-
-# logs
-
-log is stored in 
 ```bash
 "logs/"+os.getenv("EXPERIMENT_NAME", "multiturn_log_dir"),
     f"step_{self.step}",
     f"worker_{self._rank}.jsonl"
 ```
+
 in the format of
+
 ```
 step_0/
     worker_0.jsonl
@@ -42,28 +20,27 @@ step_1/
     worker_1.jsonl
 ```
 
-# analysis
+# Analysis
 
-we've provided some scripts to analyze the logs, see script-examples 
-- cdf_per_step.py: Collects all requests from all workers within each step, and plot the cdf of the request duration. ng
+We've provided some scripts to analyze the logs. Our visualized results are in [script-examples](./script-examples):
 
-- overview_duration.py: Plots the rollout and training duration for each step, shows step-to-step timing trends and patterns.
+1. `cdf_per_step.py`: Collects all requests from all workers within each step, and plots the CDF of the request duration.
 
-- per_step_all_workers.py: Analyzes time distribution for each step across all workers, shows load balancing and worker performance variations, identifies the slowest worker per step (critical path analysis), visualizes worker synchronization patterns. 
+2. `overview_duration.py`: Plots the rollout and training duration for each step, shows step-to-step timing trends and patterns.
 
-- req_analysis_and_cdf.py: workers on the log of a specific worker in a specific step, and plot the cdf of the request duration.
-plot the top slowest requests, breaks down individual requests into processing phases and shows detailed phase-by-phase timing breakdown
+3. `per_step_all_workers.py`: Analyzes time distribution for each step across all workers, shows load balancing and worker performance variations, identifies the slowest worker per step (critical path analysis), and visualizes worker synchronization patterns. 
 
-- turn_difference.py: plot the average engine call duration of each turn.
+4. `req_analysis_and_cdf.py`: workers on the log of a specific worker in a specific step, and plot the cdf of the request duration.
+plot the top slowest requests, breaks down individual requests into processing phases, and shows detailed phase-by-phase timing breakdown
 
-- turn_distribution.py: plot the number of turns distribution of each step.
+5. `turn_difference.py`: Plot the average engine call duration of each turn.
 
--event_persentage_step.py: plot the event persentage of each step.
+6. `turn_distribution.py`: plot the number of turns distribution of each step.
 
-feel free to create your own analysis scripts using AI!
+7. `event_persentage_step.py`: plot the event time taken in percentage of each step.
 
 
-# A Quick Reproduce to profile
+# A Quick Reproduction to profile
 
 ```bash
 docker run \
