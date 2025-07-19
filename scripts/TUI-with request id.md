@@ -35,8 +35,8 @@ python rollout_viewer.py  ./data/rollouts
 
 
 ## Request ID搜索
-脚本位置：`scripts\rollout_viewer_with_request_id.py`
-来源是 `AsyncRolloutRequest`，与本分支对齐。
-脚本不能存在配置 `actor_rollout_ref.rollout.mode=async \`
-样例jsonl:`rollout\1.jsonl`
-搜索自带 trim "-"，这个符号不影响搜索
+- 脚本位置：`scripts\rollout_viewer_with_request_id.py`
+- 来源是 `AsyncRolloutRequest`，与本分支对齐。
+- 脚本不能存在配置 `actor_rollout_ref.rollout.mode=async \`
+- 样例jsonl:`rollout\1.jsonl`
+- 搜索自带 trim "-"，这个符号不影响搜索
