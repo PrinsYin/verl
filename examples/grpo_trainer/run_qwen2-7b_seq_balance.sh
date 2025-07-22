@@ -65,7 +65,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     algorithm.use_kl_in_reward=False \
     trainer.critic_warmup=0 \
-    trainer.logger=['console','wandb'] \
+    trainer.logger='["console","wandb"]' \
     trainer.project_name='verl-profile-sglang' \
     trainer.experiment_name='qwen2_7b_function_rm_kl1e-3' \
     trainer.val_before_train=False \
