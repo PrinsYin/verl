@@ -1028,6 +1028,49 @@ class RayPPOTrainer:
         )
         metrics.update(global_balance_stats)
 
+    def _compute_old_log_prob(self, batch: DataProto, metrics: dict, timing_raw: dict, timer_name: str = "old_log_prob"):
+        """Compute old log probabilities and entropy metrics.
+        
+        Args:
+            batch: The data batch
+            metrics: Metrics dictionary to update
+            timing_raw: Timing dictionary for profiling
+            timer_name: Name for the timer
+            
+        Returns:
+            Updated batch with old_log_probs
+        """
+        with marked_timer(timer_name, timing_raw, color="blue"):
+            old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
+            # Also compute entropy for metrics
+            entropys = old_log_prob.batch["entropys"]
+            response_masks = batch.batch["response_mask"]
+            loss_agg_mode = self.config.actor_rollout_ref.actor.loss_agg_mode
+            entropy_agg = agg_loss(loss_mat=entropys, loss_mask=response_masks, loss_agg_mode=loss_agg_mode)
+            old_log_prob_metrics = {"actor/entropy": entropy_agg.detach().item()}
+            metrics.update(old_log_prob_metrics)
+            old_log_prob.batch.pop("entropys")
+            batch = batch.union(old_log_prob)
+        return batch
+
+    def _compute_ref_log_prob(self, batch: DataProto, timing_raw: dict, timer_name: str = "ref"):
+        """Compute reference log probabilities.
+        
+        Args:
+            batch: The data batch
+            timing_raw: Timing dictionary for profiling
+            timer_name: Name for the timer
+            
+        Returns:
+            Updated batch with ref_log_prob
+        """
+        with marked_timer(timer_name, timing_raw, color="olive"):
+            if not self.ref_in_actor:
+                ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(batch)
+            else:
+                ref_log_prob = self.actor_rollout_wg.compute_ref_log_prob(batch)
+            batch = batch.union(ref_log_prob)
+        return batch
 
     def _compute_reward(self, batch: DataProto, reward_tensor, reward_extra_infos_dict,metrics):
 
@@ -1194,6 +1237,15 @@ class RayPPOTrainer:
                         reward_tensor = self.rm_wg.compute_rm_score(batch)
                         batch = batch.union(reward_tensor)
 
+                    # For KL penalty calculation, we need to compute log probabilities first
+                    if self.config.algorithm.use_kl_in_reward:
+                        # Compute old_log_probs for KL penalty calculation
+                        batch = self._compute_old_log_prob(batch, metrics, timing_raw, "old_log_prob_for_kl")
+
+                        # Compute ref_log_prob for KL penalty calculation
+                        if self.use_reference_policy:
+                            batch = self._compute_ref_log_prob(batch, timing_raw, "ref_for_kl")
+
                     if self.config.algorithm.dynamic_filter.enable or not self.config.reward_model.launch_reward_fn_async:
                         reward_tensor, reward_extra_infos_dict = compute_reward(batch, self.reward_fn)
                         batch = self._compute_reward(batch, reward_tensor, reward_extra_infos_dict, metrics)
@@ -1286,17 +1338,9 @@ class RayPPOTrainer:
                         if self.config.reward_model.launch_reward_fn_async and not self.config.algorithm.dynamic_filter.enable:
                             future_reward = compute_reward_async.remote(data=batch, reward_fn=self.reward_fn)
 
-                    # recompute old_log_probs
-                    with marked_timer("old_log_prob", timing_raw, color="blue"):
-                        old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
-                        entropys = old_log_prob.batch["entropys"]
-                        response_masks = batch.batch["response_mask"]
-                        loss_agg_mode = self.config.actor_rollout_ref.actor.loss_agg_mode
-                        entropy_agg = agg_loss(loss_mat=entropys, loss_mask=response_masks, loss_agg_mode=loss_agg_mode)
-                        old_log_prob_metrics = {"actor/entropy": entropy_agg.detach().item()}
-                        metrics.update(old_log_prob_metrics)
-                        old_log_prob.batch.pop("entropys")
-                        batch = batch.union(old_log_prob)
+                    # recompute old_log_probs (skip if already computed for KL penalty)
+                    if not (self.config.algorithm.use_kl_in_reward and "old_log_probs" in batch.batch):
+                        batch = self._compute_old_log_prob(batch, metrics, timing_raw)
 
                         if "rollout_log_probs" in batch.batch.keys():
                             # TODO: we may want to add diff of probs too.
@@ -1323,13 +1367,9 @@ class RayPPOTrainer:
                             )
 
                     if self.use_reference_policy:
-                        # compute reference log_prob
-                        with marked_timer("ref", timing_raw, color="olive"):
-                            if not self.ref_in_actor:
-                                ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(batch)
-                            else:
-                                ref_log_prob = self.actor_rollout_wg.compute_ref_log_prob(batch)
-                            batch = batch.union(ref_log_prob)
+                        # compute reference log_prob (skip if already computed for KL penalty)
+                        if not (self.config.algorithm.use_kl_in_reward and "ref_log_prob" in batch.batch):
+                            batch = self._compute_ref_log_prob(batch, timing_raw)
 
                     # compute values
                     if self.use_critic:
