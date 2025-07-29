@@ -24,6 +24,27 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+
+# 提前下载模型
+mkdir -p $HOME/models
+huggingface-cli download Qwen/Qwen2.5-3B-Instruct --local-dir $HOME/models/Qwen2.5-3B-Instruct
+
+# parse command line arguments
+TP_SIZE=""
+OTHER_ARGS=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --tp)
+            TP_SIZE="$2"
+            shift 2
+            ;;
+        *)
+            OTHER_ARGS="$OTHER_ARGS $1"
+            shift
+            ;;
+    esac
+done
+
 ulimit -n 65535
 
 PROJECT_DIR="$(pwd)"
@@ -35,7 +56,7 @@ python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_batch_size=256 \
     data.max_prompt_length=1024 \
-    data.max_response_length=1024 \
+    data.max_response_length=600 \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
     data.return_raw_chat=True \
@@ -59,7 +80,6 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=32 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     algorithm.use_kl_in_reward=False \
-    algorithm.dynamic_filter=True \
     trainer.critic_warmup=0 \
     trainer.logger=['console','wandb'] \
     trainer.project_name='verl-profile-sglang-qwen2.5' \

@@ -573,25 +573,6 @@ class RayPPOTrainer:
         except Exception as e:
             print(f"Warning: Could not set total_training_steps in config. Structure missing? Error: {e}")
 
-    def _extract_reward_extra_infos(self, batch: DataProto) -> dict[str, list]:
-        """Extract reward extra info from batch.non_tensor_batch for dump_generations.
-        """
-        reward_extra_infos_dict = {}
-        
-        if hasattr(batch, 'non_tensor_batch') and batch.non_tensor_batch:
-            # Standard keys that are not reward extra info
-            standard_keys = {
-                'uid', 'data_source', '__num_turns__', 'seq_reward', 'seq_final_reward', 
-                'raw_prompt_ids', 'raw_prompt', 'multi_modal_data', 'tools_kwargs', 
-                'interaction_kwargs', 'agent_name', 'index'
-            }
-            
-            for key, values in batch.non_tensor_batch.items():
-                if key not in standard_keys and isinstance(values, (list, np.ndarray)):
-                    reward_extra_infos_dict[key] = values.tolist() if isinstance(values, np.ndarray) else values
-                    
-        return reward_extra_infos_dict
-
     def _dump_generations(self, inputs, outputs, scores, reward_extra_infos_dict, dump_path):
         """Dump rollout/validation samples as JSONL."""
         os.makedirs(dump_path, exist_ok=True)
@@ -1047,80 +1028,6 @@ class RayPPOTrainer:
         )
         metrics.update(global_balance_stats)
 
-    def _compute_old_log_prob(self, batch: DataProto, metrics: dict, timing_raw: dict, timer_name: str = "old_log_prob"):
-        """Compute old log probabilities and entropy metrics.
-        
-        Args:
-            batch: The data batch
-            metrics: Metrics dictionary to update
-            timing_raw: Timing dictionary for profiling
-            timer_name: Name for the timer
-            
-        Returns:
-            Updated batch with old_log_probs
-        """
-        with marked_timer(timer_name, timing_raw, color="blue"):
-            old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
-            # Also compute entropy for metrics
-            entropys = old_log_prob.batch["entropys"]
-            response_masks = batch.batch["response_mask"]
-            loss_agg_mode = self.config.actor_rollout_ref.actor.loss_agg_mode
-            entropy_agg = agg_loss(loss_mat=entropys, loss_mask=response_masks, loss_agg_mode=loss_agg_mode)
-            old_log_prob_metrics = {"actor/entropy": entropy_agg.detach().item()}
-            metrics.update(old_log_prob_metrics)
-            old_log_prob.batch.pop("entropys")
-            batch = batch.union(old_log_prob)
-        return batch
-
-    def _compute_ref_log_prob(self, batch: DataProto, timing_raw: dict, timer_name: str = "ref"):
-        """Compute reference log probabilities.
-        
-        Args:
-            batch: The data batch
-            timing_raw: Timing dictionary for profiling
-            timer_name: Name for the timer
-            
-        Returns:
-            Updated batch with ref_log_prob
-        """
-        with marked_timer(timer_name, timing_raw, color="olive"):
-            if not self.ref_in_actor:
-                ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(batch)
-            else:
-                ref_log_prob = self.actor_rollout_wg.compute_ref_log_prob(batch)
-            batch = batch.union(ref_log_prob)
-        return batch
-
-    def _compute_reward(self, batch: DataProto, reward_tensor, reward_extra_infos_dict,metrics):
-
-        # compute scores. Support both model and function-based.
-        # We first compute the scores using reward model. Then, we call reward_fn to combine
-        # the results from reward model and rule-based results.
-        # we combine with rule-based rm
-
-
-        batch.batch["token_level_scores"] = reward_tensor
-
-        if reward_extra_infos_dict:
-            batch.non_tensor_batch.update(
-                {k: np.array(v) for k, v in reward_extra_infos_dict.items()}
-            )
-
-        # compute rewards. apply_kl_penalty if available
-        if self.config.algorithm.use_kl_in_reward:
-            batch, kl_metrics = apply_kl_penalty(
-                batch, kl_ctrl=self.kl_ctrl_in_reward, kl_penalty=self.config.algorithm.kl_penalty
-            )
-            metrics.update(
-                kl_metrics
-            )  # TODO: This will be cleared if we use multiple genenration batches
-        else:
-            batch.batch["token_level_rewards"] = batch.batch["token_level_scores"]
-        
-        return batch
-
-
-
     def fit(self):
         """
         The training loop of PPO.
@@ -1138,6 +1045,7 @@ class RayPPOTrainer:
             default_backend=self.config.trainer.logger,
             config=OmegaConf.to_container(self.config, resolve=True),
         )
+
         self.global_steps = 0
 
         # load checkpoint before doing anything
@@ -1161,30 +1069,10 @@ class RayPPOTrainer:
         last_val_metrics = None
         self.max_steps_duration = 0
 
-        #dynamic filter
-
-        self.gen_steps = 1
-        accumulated_batch = None
-        num_prompt_in_batch = 0
-        num_gen_batches = 0
-        prompt_bsz = self.config.data.train_batch_size
-        self.reward_step = 0
-        
-        # Display dynamic filter settings
-        if self.config.algorithm.dynamic_filter.enable:
-            print(f"[DF] Dynamic Filter ENABLED - Target batch size: {prompt_bsz} prompts")
-            print(f"[DF] Filter metric: {self.config.algorithm.dynamic_filter.metric}")
-            print(f"[DF] Max generation batches: {self.config.algorithm.dynamic_filter.get('max_num_gen_batches', 'unlimited')}")
-        else:
-            print(f"[Normal] Dynamic Filter DISABLED - Processing single batches of {prompt_bsz} prompts")
-
         for epoch in range(self.config.trainer.total_epochs):
             for batch_dict in self.train_dataloader:
                 metrics = {}
                 timing_raw = {}
-
-                # dynamic filter
-                num_gen_batches+=1
 
                 do_profile = (
                     self.global_steps in self.config.trainer.profile_steps
@@ -1261,117 +1149,6 @@ class RayPPOTrainer:
                     batch = batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True)
                     batch = batch.union(gen_batch_output)
 
-                    if self.use_rm:
-                        reward_tensor = self.rm_wg.compute_rm_score(batch)
-                        batch = batch.union(reward_tensor)
-
-                    # For KL penalty calculation, we need to compute log probabilities first
-                    if self.config.algorithm.use_kl_in_reward:
-                        # Compute old_log_probs for KL penalty calculation
-                        batch = self._compute_old_log_prob(batch, metrics, timing_raw, "old_log_prob_for_kl")
-
-                        # Compute ref_log_prob for KL penalty calculation
-                        if self.use_reference_policy:
-                            batch = self._compute_ref_log_prob(batch, timing_raw, "ref_for_kl")
-
-                    if self.config.algorithm.dynamic_filter.enable or not self.config.reward_model.launch_reward_fn_async:
-                        reward_tensor, reward_extra_infos_dict = compute_reward(batch, self.reward_fn)
-                        batch = self._compute_reward(batch, reward_tensor, reward_extra_infos_dict, metrics)
-                    
-                    if self.config.algorithm.dynamic_filter.enable:
-                        # NOTE: When prompts after filtering is less than train batch size,
-                        # we skip to the next generation batch
-                        metric_name = self.config.algorithm.dynamic_filter.metric
-                        if metric_name == "seq_final_reward":
-                            # Turn to numpy for easier filtering
-                            raise ValueError("seq_final_reward is not supported for dynamic filter")
-                            # batch.non_tensor_batch["seq_final_reward"] = (
-                            #     batch.batch["token_level_rewards"].sum(dim=-1).numpy()
-                            # )
-                        elif metric_name == "seq_reward":
-                            batch.non_tensor_batch["seq_reward"] = (
-                                batch.batch["token_level_scores"].sum(dim=-1).numpy()
-                            )
-
-                        # Collect the sequence reward for each trajectory
-                        prompt_uid2metric_vals = defaultdict(list)
-                        for uid, metric_val in zip(
-                            batch.non_tensor_batch["uid"], batch.non_tensor_batch[metric_name], strict=True
-                        ):
-                            prompt_uid2metric_vals[uid].append(metric_val)
-
-                        prompt_uid2metric_std = {}
-                        for prompt_uid, metric_vals in prompt_uid2metric_vals.items():
-                            prompt_uid2metric_std[prompt_uid] = np.std(metric_vals)
-
-                        kept_prompt_uids = [
-                            uid
-                            for uid, std in prompt_uid2metric_std.items()
-                            if std > 0 or len(prompt_uid2metric_vals[uid]) == 1
-                        ]
-                        
-                        total_prompts_this_batch = len(prompt_uid2metric_std)
-                        kept_prompts_this_batch = len(kept_prompt_uids)
-                        filtered_prompts_this_batch = total_prompts_this_batch - kept_prompts_this_batch
-                        
-                        print(f"[DF] Filtering: {kept_prompts_this_batch}/{total_prompts_this_batch} prompts kept, "
-                              f"{filtered_prompts_this_batch} filtered out")
-                        
-                        num_prompt_in_batch += kept_prompts_this_batch
-
-                        kept_traj_idxs = []
-                        for idx, traj_from_prompt_uid in enumerate(batch.non_tensor_batch["uid"]):
-                            if traj_from_prompt_uid in kept_prompt_uids:
-                                kept_traj_idxs.append(idx)
-
-                        batch = batch[kept_traj_idxs]
-                        kept_trajectories_this_batch = len(kept_traj_idxs)
-                        
-                        accumulated_batch = batch if accumulated_batch is None else DataProto.concat([accumulated_batch, batch])
-                        accumulated_trajectories = len(accumulated_batch.batch['responses']) if accumulated_batch else 0
-                        
-                        print(f"[DF] Trajectories: {kept_trajectories_this_batch} kept this batch, "
-                              f"{accumulated_trajectories} total accumulated")
-                        if num_prompt_in_batch < prompt_bsz:
-                            print(f"{num_prompt_in_batch=} < {prompt_bsz=}")
-                            max_num_gen_batches = self.config.algorithm.dynamic_filter.max_num_gen_batches
-                            if max_num_gen_batches <= 0 or num_gen_batches < max_num_gen_batches:
-                                print(f"[DF] Continue generating (batch {num_gen_batches+1})...")
-                                continue
-                            else:
-                                raise ValueError(
-                                    f"{num_gen_batches=} >= {max_num_gen_batches=}."
-                                    + " Generated too many. Please check if your data are too difficult."
-                                    + " You could also try set max_num_gen_batches=0 to enable endless trials."
-                                )
-                        else:
-                            # Align the batch
-                            traj_bsz = self.config.data.train_batch_size * self.config.actor_rollout_ref.rollout.n
-                            batch = accumulated_batch[:traj_bsz]
-
-                            # Recalculate KL penalty on the trimmed batch for consistency
-                            if self.config.algorithm.use_kl_in_reward:
-                                print("Recalculating KL penalty on trimmed batch...")
-                                with marked_timer("recalc_kl_penalty", timing_raw, color="orange"):
-                                    # First recompute old_log_probs for the trimmed batch
-                                    batch = self._compute_old_log_prob(batch, metrics, timing_raw, "old_log_prob_trimmed")
-                                    
-                                    # Then recompute ref_log_prob for the trimmed batch
-                                    if self.use_reference_policy:
-                                        batch = self._compute_ref_log_prob(batch, timing_raw, "ref_trimmed")
-                                    
-                                    # Recalculate reward computation to get token_level_scores on trimmed batch
-                                    if not self.config.reward_model.launch_reward_fn_async:
-                                        reward_tensor, reward_extra_infos_dict = compute_reward(batch, self.reward_fn)
-                                        batch = self._compute_reward(batch, reward_tensor, reward_extra_infos_dict, metrics)
-                                    else:
-                                        # For async case, we need to recompute since the batch changed
-                                        future_reward = compute_reward_async.remote(data=batch, reward_fn=self.reward_fn)
-                                        reward_tensor, reward_extra_infos_dict = ray.get(future_reward)
-                                        batch = self._compute_reward(batch, reward_tensor, reward_extra_infos_dict, metrics)
-
-
-
                     if "response_mask" not in batch.batch.keys():
                         batch.batch["response_mask"] = compute_response_mask(batch)
                     # Balance the number of valid tokens across DP ranks.
@@ -1387,13 +1164,26 @@ class RayPPOTrainer:
 
                     with marked_timer("reward", timing_raw, color="yellow"):
                         # compute reward model score
+                        if self.use_rm:
+                            reward_tensor = self.rm_wg.compute_rm_score(batch)
+                            batch = batch.union(reward_tensor)
 
-                        if self.config.reward_model.launch_reward_fn_async and not self.config.algorithm.dynamic_filter.enable:
+                        if self.config.reward_model.launch_reward_fn_async:
                             future_reward = compute_reward_async.remote(data=batch, reward_fn=self.reward_fn)
+                        else:
+                            reward_tensor, reward_extra_infos_dict = compute_reward(batch, self.reward_fn)
 
-                    # recompute old_log_probs (skip if already computed for KL penalty)
-                    if not (self.config.algorithm.use_kl_in_reward and "old_log_probs" in batch.batch):
-                        batch = self._compute_old_log_prob(batch, metrics, timing_raw)
+                    # recompute old_log_probs
+                    with marked_timer("old_log_prob", timing_raw, color="blue"):
+                        old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
+                        entropys = old_log_prob.batch["entropys"]
+                        response_masks = batch.batch["response_mask"]
+                        loss_agg_mode = self.config.actor_rollout_ref.actor.loss_agg_mode
+                        entropy_agg = agg_loss(loss_mat=entropys, loss_mask=response_masks, loss_agg_mode=loss_agg_mode)
+                        old_log_prob_metrics = {"actor/entropy": entropy_agg.detach().item()}
+                        metrics.update(old_log_prob_metrics)
+                        old_log_prob.batch.pop("entropys")
+                        batch = batch.union(old_log_prob)
 
                         if "rollout_log_probs" in batch.batch.keys():
                             # TODO: we may want to add diff of probs too.
@@ -1420,9 +1210,13 @@ class RayPPOTrainer:
                             )
 
                     if self.use_reference_policy:
-                        # compute reference log_prob (skip if already computed for KL penalty)
-                        if not (self.config.algorithm.use_kl_in_reward and "ref_log_prob" in batch.batch):
-                            batch = self._compute_ref_log_prob(batch, timing_raw)
+                        # compute reference log_prob
+                        with marked_timer("ref", timing_raw, color="olive"):
+                            if not self.ref_in_actor:
+                                ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(batch)
+                            else:
+                                ref_log_prob = self.actor_rollout_wg.compute_ref_log_prob(batch)
+                            batch = batch.union(ref_log_prob)
 
                     # compute values
                     if self.use_critic:
@@ -1432,12 +1226,13 @@ class RayPPOTrainer:
 
                     with marked_timer("adv", timing_raw, color="brown"):
                         # we combine with rule-based rm
-                        if self.config.reward_model.launch_reward_fn_async and not self.config.algorithm.dynamic_filter.enable:
+                        reward_extra_infos_dict: dict[str, list]
+                        if self.config.reward_model.launch_reward_fn_async:
                             reward_tensor, reward_extra_infos_dict = ray.get(future_reward)
-                            batch.batch["token_level_scores"] = reward_tensor
+                        batch.batch["token_level_scores"] = reward_tensor
 
-                            if reward_extra_infos_dict:
-                                batch.non_tensor_batch.update({k: np.array(v) for k, v in reward_extra_infos_dict.items()})
+                        if reward_extra_infos_dict:
+                            batch.non_tensor_batch.update({k: np.array(v) for k, v in reward_extra_infos_dict.items()})
 
                         # compute rewards. apply_kl_penalty if available
                         if self.config.algorithm.use_kl_in_reward:
@@ -1464,9 +1259,6 @@ class RayPPOTrainer:
                             config=self.config.algorithm,
                         )
 
-
-
-
                     # update critic
                     if self.use_critic:
                         with marked_timer("update_critic", timing_raw, color="pink"):
@@ -1490,9 +1282,11 @@ class RayPPOTrainer:
                             inputs = self.tokenizer.batch_decode(batch.batch["prompts"], skip_special_tokens=True)
                             outputs = self.tokenizer.batch_decode(batch.batch["responses"], skip_special_tokens=True)
                             scores = batch.batch["token_level_scores"].sum(-1).cpu().tolist()
-                            
-                            reward_extra_infos_dict = self._extract_reward_extra_infos(batch)
-                            
+                            if "request_id" in batch.non_tensor_batch:
+                                reward_extra_infos_dict.setdefault(
+                                    "request_id",
+                                    batch.non_tensor_batch["request_id"].tolist(),
+                                )
                             self._dump_generations(
                                 inputs=inputs,
                                 outputs=outputs,
@@ -1565,17 +1359,6 @@ class RayPPOTrainer:
                 progress_bar.update(1)
                 self.global_steps += 1
 
-                # Training step completed, show summary
-                if self.config.algorithm.dynamic_filter.enable and num_gen_batches > 0:
-                    print(f"[DF] Step {self.global_steps} completed: Used {num_gen_batches} generation batches")
-                elif not self.config.algorithm.dynamic_filter.enable:
-                    print(f"[Normal] Step {self.global_steps} completed: Single batch processing")
-                
-                # Reset dynamic filter state for next training step
-                self.gen_steps += 1
-                num_gen_batches = 0 
-                num_prompt_in_batch = 0
-                accumulated_batch = None
                 if is_last_step:
                     pprint(f"Final validation metrics: {last_val_metrics}")
                     progress_bar.close()
