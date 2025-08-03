@@ -1,0 +1,16 @@
+tools:
+  - class_name: "verl.tools.math_tool.MathTool"
+    config: 
+      type: native
+    tool_schema:
+      type: "function"
+      function:
+        name: "code_interpreter"
+        description: "A tool for calculating the reward of math problems. (1.0 if parsed answer is correct, 0.0 if parsed answer is incorrect or not correctly parsed)"
+        parameters:
+          type: "object"
+          properties:
+            answer:
+              type: "string"
+              description: "The model's answer to the math problem, should be in boxed format like \\boxed{answer}"
+          required: ["answer"]
