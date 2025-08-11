@@ -43,6 +43,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.clip_ratio_high=0.28 \
     actor_rollout_ref.actor.clip_ratio_c=10.0 \
     actor_rollout_ref.actor.optim.lr=1e-6 \
+    algorithm.dynamic_filter.enable=True \
     actor_rollout_ref.actor.use_dynamic_bsz=False \
     actor_rollout_ref.actor.ppo_mini_batch_size=16 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=8 \
