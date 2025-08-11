@@ -1122,7 +1122,7 @@ class RayPPOTrainer:
         accumulated_batch = None
         num_prompt_in_batch = 0
         num_gen_batches = 0
-        prompt_bsz = self.config.data.train_batch_size
+        prompt_bsz = self.config.actor_rollout_ref.actor.ppo_mini_batch_size
         self.reward_step = 0
 
         # Display dynamic filter settings
@@ -1322,7 +1322,8 @@ class RayPPOTrainer:
                                 )
                         else:
                             # Align the batch
-                            traj_bsz = self.config.data.train_batch_size * self.config.actor_rollout_ref.rollout.n
+                            num_mini_batch = num_prompt_in_batch // self.config.actor_rollout_ref.actor.ppo_mini_batch_size
+                            traj_bsz = num_mini_batch * self.config.data.ppo_mini_batch_size * self.config.actor_rollout_ref.rollout.n
                             batch = accumulated_batch[:traj_bsz]
 
                             print(
