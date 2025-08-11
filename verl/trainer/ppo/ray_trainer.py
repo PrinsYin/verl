@@ -1243,9 +1243,11 @@ class RayPPOTrainer:
                             prompt_uid2rewards[uid].append(reward)
                         
                         # Count different reward patterns
-                        all_negative_prompts = 0  # 全-1
-                        all_positive_prompts = 0  # 全1  
-                        mixed_prompts = 0         # 1/-1都有
+                        all_negative_prompts = 0  # 全<0
+                        all_positive_prompts = 0  # 全>0  
+                        mixed_prompts = 0         # 正负都有
+                        exact_all_ones = 0        # 全=1.0
+                        exact_all_minus_ones = 0  # 全=-1.0
                         
                         for uid, rewards in prompt_uid2rewards.items():
                             rewards = np.array(rewards)
@@ -1255,11 +1257,19 @@ class RayPPOTrainer:
                                 all_positive_prompts += 1
                             else:
                                 mixed_prompts += 1
+                            
+                            # Check for exact values
+                            if np.all(rewards == 1.0):
+                                exact_all_ones += 1
+                            elif np.all(rewards == -1.0):
+                                exact_all_minus_ones += 1
                         
                         sample_metrics = {
                             "train/reward_pattern/all_negative_prompts": all_negative_prompts,
                             "train/reward_pattern/all_positive_prompts": all_positive_prompts, 
                             "train/reward_pattern/mixed_prompts": mixed_prompts,
+                            "train/reward_pattern/exact_all_ones": exact_all_ones,
+                            "train/reward_pattern/exact_all_minus_ones": exact_all_minus_ones,
                             "train/reward_pattern/total_unique_prompts": len(prompt_uid2rewards)
                         }
                         metrics.update(sample_metrics)
@@ -1278,7 +1288,7 @@ class RayPPOTrainer:
                         )
                         print(
                             f"[Reward Pattern] All-: {all_negative_prompts}, All+: {all_positive_prompts}, "
-                            f"Mixed: {mixed_prompts}, Total: {len(prompt_uid2rewards)}"
+                            f"Mixed: {mixed_prompts}, Exact=1.0: {exact_all_ones}, Exact=-1.0: {exact_all_minus_ones}, Total: {len(prompt_uid2rewards)}"
                         )
 
                     if self.config.algorithm.dynamic_filter.enable:
@@ -1304,23 +1314,35 @@ class RayPPOTrainer:
                         ):
                             prompt_uid2metric_vals[uid].append(metric_val)
 
-                        prompt_uid2metric_std = {}
+                        prompt_uid2filter_decision = {}
                         for prompt_uid, metric_vals in prompt_uid2metric_vals.items():
-                            prompt_uid2metric_std[prompt_uid] = np.std(metric_vals)
+                            metric_vals = np.array(metric_vals)
+                            # Filter out prompts that are all positive OR all <= 0
+                            all_positive = np.all(metric_vals > 0)
+                            all_non_positive = np.all(metric_vals <= 0)
+                            # Keep prompt only if it has both positive and non-positive values
+                            should_keep = not (all_positive or all_non_positive) or len(metric_vals) == 1
+                            prompt_uid2filter_decision[prompt_uid] = should_keep
 
                         kept_prompt_uids = [
                             uid
-                            for uid, std in prompt_uid2metric_std.items()
-                            if std > 0 or len(prompt_uid2metric_vals[uid]) == 1
+                            for uid, should_keep in prompt_uid2filter_decision.items()
+                            if should_keep
                         ]
 
-                        total_prompts_this_batch = len(prompt_uid2metric_std)
+                        total_prompts_this_batch = len(prompt_uid2filter_decision)
                         kept_prompts_this_batch = len(kept_prompt_uids)
                         filtered_prompts_this_batch = total_prompts_this_batch - kept_prompts_this_batch
+                        
+                        # Count filtering reasons
+                        all_positive_filtered = sum(1 for uid, vals in prompt_uid2metric_vals.items() 
+                                                  if np.all(np.array(vals) > 0) and len(vals) > 1)
+                        all_non_positive_filtered = sum(1 for uid, vals in prompt_uid2metric_vals.items() 
+                                                       if np.all(np.array(vals) <= 0) and len(vals) > 1)
 
                         print(
                             f"[DF] Filtering: {kept_prompts_this_batch}/{total_prompts_this_batch} prompts kept, "
-                            f"{filtered_prompts_this_batch} filtered out"
+                            f"{filtered_prompts_this_batch} filtered out (all+: {all_positive_filtered}, all≤0: {all_non_positive_filtered})"
                         )
 
                         num_prompt_in_batch += kept_prompts_this_batch
@@ -1375,9 +1397,11 @@ class RayPPOTrainer:
                                 post_filter_prompt_uid2rewards[uid].append(reward)
                             
                             # Count different reward patterns after filtering
-                            post_filter_all_negative = 0  # 全-1
-                            post_filter_all_positive = 0  # 全1  
-                            post_filter_mixed = 0         # 1/-1都有
+                            post_filter_all_negative = 0  # 全<0
+                            post_filter_all_positive = 0  # 全>0  
+                            post_filter_mixed = 0         # 正负都有
+                            post_filter_exact_all_ones = 0        # 全=1.0
+                            post_filter_exact_all_minus_ones = 0  # 全=-1.0
                             
                             for uid, rewards in post_filter_prompt_uid2rewards.items():
                                 rewards = np.array(rewards)
@@ -1387,18 +1411,26 @@ class RayPPOTrainer:
                                     post_filter_all_positive += 1
                                 else:
                                     post_filter_mixed += 1
+                                
+                                # Check for exact values
+                                if np.all(rewards == 1.0):
+                                    post_filter_exact_all_ones += 1
+                                elif np.all(rewards == -1.0):
+                                    post_filter_exact_all_minus_ones += 1
                             
                             post_filter_metrics = {
                                 "train/post_filter_reward_pattern/all_negative_prompts": post_filter_all_negative,
                                 "train/post_filter_reward_pattern/all_positive_prompts": post_filter_all_positive, 
                                 "train/post_filter_reward_pattern/mixed_prompts": post_filter_mixed,
+                                "train/post_filter_reward_pattern/exact_all_ones": post_filter_exact_all_ones,
+                                "train/post_filter_reward_pattern/exact_all_minus_ones": post_filter_exact_all_minus_ones,
                                 "train/post_filter_reward_pattern/total_unique_prompts": len(post_filter_prompt_uid2rewards)
                             }
                             metrics.update(post_filter_metrics)
                             
                             print(
                                 f"[Post-Filter Reward Pattern] All-: {post_filter_all_negative}, All+: {post_filter_all_positive}, "
-                                f"Mixed: {post_filter_mixed}, Total: {len(post_filter_prompt_uid2rewards)}"
+                                f"Mixed: {post_filter_mixed}, Exact=1.0: {post_filter_exact_all_ones}, Exact=-1.0: {post_filter_exact_all_minus_ones}, Total: {len(post_filter_prompt_uid2rewards)}"
                             )
                     else:
                         # Non-dynamic filter case - always complete after processing one batch
