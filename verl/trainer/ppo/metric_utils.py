@@ -450,6 +450,12 @@ def compute_reward_metrics(batch: DataProto) -> dict[str, Any]:
     """
     Computes reward-related metrics from a batch of data for PPO training.
 
+    This function computes metrics from the RAW batch BEFORE any dynamic filtering
+    is applied. When using dynamic filtering (DAPO), this captures the reward distribution
+    of ALL generated responses, including those that will be filtered out for being too
+    homogeneous. This provides insight into the raw reward signal quality before diversity
+    filtering removes low-variance response groups.
+
     This function calculates statistics (mean, std, max, min) for sequence-level rewards
     derived from token-level scores.
 
@@ -458,10 +464,10 @@ def compute_reward_metrics(batch: DataProto) -> dict[str, Any]:
 
     Returns:
         A dictionary of reward metrics including:
-            - train/reward/mean: Mean sequence reward
-            - train/reward/std: Standard deviation of sequence rewards
-            - train/reward/max: Maximum sequence reward
-            - train/reward/min: Minimum sequence reward
+            - train/reward/mean: Mean sequence reward (pre-filtering)
+            - train/reward/std: Standard deviation of sequence rewards (pre-filtering)
+            - train/reward/max: Maximum sequence reward (pre-filtering)
+            - train/reward/min: Minimum sequence reward (pre-filtering)
     """
     seq_reward_tensor = batch.batch["token_level_scores"].sum(-1)
 
