@@ -1365,11 +1365,6 @@ class RayPPOTrainer:
                         batch = batch[kept_traj_idxs]
                         kept_trajectories_this_batch = len(kept_traj_idxs)
 
-                        accumulated_batch = (
-                            batch if accumulated_batch is None else DataProto.concat([accumulated_batch, batch])
-                        )
-                        accumulated_trajectories = len(accumulated_batch.batch["responses"]) if accumulated_batch else 0
-
                         print(
                             f"[DF] Trajectories: {kept_trajectories_this_batch} kept this batch, "
                             f"{accumulated_trajectories} total accumulated"
@@ -1417,7 +1412,7 @@ class RayPPOTrainer:
 
                             for uid, rewards in post_filter_prompt_uid2rewards.items():
                                 rewards = np.array(rewards)
-                                if np.all(rewards < 0):
+                                if np.all(rewards <= 0):
                                     post_filter_all_negative += 1
                                 elif np.all(rewards > 0):
                                     post_filter_all_positive += 1
@@ -1473,7 +1468,7 @@ class RayPPOTrainer:
 
                         for uid, rewards in normal_prompt_uid2rewards.items():
                             rewards = np.array(rewards)
-                            if np.all(rewards < 0):
+                            if np.all(rewards <= 0):
                                 normal_all_negative += 1
                             elif np.all(rewards > 0):
                                 normal_all_positive += 1
