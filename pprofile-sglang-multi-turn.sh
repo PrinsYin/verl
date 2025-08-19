@@ -33,7 +33,7 @@ fi
 
 mkdir -p logs
 
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 # truncate now's return value, only keep date, hour and minute (format: DD-HH-MM)
 TIMESTAMP=$(date +"%d-%H-%M")
